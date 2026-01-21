@@ -6,8 +6,8 @@ WORKDIR /app
 # 复制依赖文件
 COPY requirements.txt .
 
-# 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装Python依赖 - 使用-t参数指定安装目录
+RUN pip install --no-cache-dir -r requirements.txt -t /app/packages
 
 # 复制应用代码
 COPY app.py .
@@ -21,7 +21,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # 从builder阶段复制已安装的包
-COPY --from=builder /usr/local/lib/python3.9/site-packages/ /usr/local/lib/python3.9/site-packages/
+# 注意：Python 3.10的site-packages路径是/usr/local/lib/python3.10/site-packages/
+COPY --from=builder /app/packages /usr/local/lib/python3.10/site-packages/
 COPY --from=builder /app/app.py .
 
 EXPOSE 9002
