@@ -1,69 +1,87 @@
-name: Build Multi-arch Docker Image
+name: Build and Push Docker image
 
 on:
   push:
     branches: [ main ]
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: gyjune/sdtv
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_REGISTRY: docker.io
 
 jobs:
-  build-multi-arch:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-{{date 'YYYYMMDD'}}
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image info
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Image pushed to: ${{ env.DOCKERHUB_REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
+
+  test:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-      with:
-        driver-opts: |
-          image=moby/buildkit:master
-        install: true
-    
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=tag
-          type=sha
-          type=raw,value=latest
-          type=raw,value=alpine-latest
-    
-    - name: Build and push multi-arch
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        platforms: linux/amd64,linux/arm64
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-    
-    - name: Show success message
-      run: |
-        echo "🎉 多架构镜像构建成功！"
-        echo "支持的架构: linux/amd64, linux/arm64"
-        echo "标签: ${{ steps.meta.outputs.tags }}"
-        echo ""
-        echo "拉取命令:"
-        echo "  docker pull ${{ env.IMAGE_NAME }}:alpine-latest"
-        echo "  docker pull ${{ env.IMAGE_NAME }}:latest"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t sdtv-test .
+
+      - name: Run container test
+        run: |
+          docker run -d -p 9002:9002 --name sdtv-test sdtv-test
+          sleep 10
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:9002/ | grep -q 200 || (echo "Homepage failed" && exit 1)
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:9002/play?id=jncqxw | grep -q 302 || (echo "Play endpoint failed" && exit 1)
+          echo "All tests passed!"
+          docker stop sdtv-test
+          docker rm sdtv-test
