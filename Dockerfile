@@ -1,17 +1,19 @@
 FROM alpine:3.19
 
-WORKDIR /app
+# 使用国内 Alpine 镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
-# 安装Python和pip
 RUN apk add --no-cache python3 py3-pip
 
-# 复制依赖文件
+WORKDIR /app
+
 COPY requirements.txt .
 
-# 安装Python依赖（添加详细输出以便调试）
-RUN pip3 install --no-cache-dir -r requirements.txt --verbose
+# 使用国内 PyPI 镜像
+RUN pip3 install --no-cache-dir -r requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
 
-# 复制应用代码
 COPY app.py .
 
 EXPOSE 9002
