@@ -1,47 +1,69 @@
-name: Build Docker Image
+name: Build Multi-arch Docker Image
 
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 env:
+  REGISTRY: docker.io
   IMAGE_NAME: gyjune/sdtv
 
 jobs:
-  build:
+  build-multi-arch:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # 获取所有历史记录
-
-    - name: Verify files
-      run: |
-        echo "=== 检查文件 ==="
-        ls -la
-        echo -e "\n=== requirements.txt 内容 ==="
-        cat requirements.txt
-        echo -e "\n=== Dockerfile 内容 ==="
-        cat Dockerfile
-
+    
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
-    - name: Login to DockerHub
+      with:
+        driver-opts: |
+          image=moby/buildkit:master
+        install: true
+    
+    - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-    - name: Build and push
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=tag
+          type=sha
+          type=raw,value=latest
+          type=raw,value=alpine-latest
+    
+    - name: Build and push multi-arch
       uses: docker/build-push-action@v5
       with:
         context: .
+        platforms: linux/amd64,linux/arm64
         push: true
-        tags: |
-          ${{ env.IMAGE_NAME }}:alpine-latest
-          ${{ env.IMAGE_NAME }}:latest
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+    
+    - name: Show success message
+      run: |
+        echo "🎉 多架构镜像构建成功！"
+        echo "支持的架构: linux/amd64, linux/arm64"
+        echo "标签: ${{ steps.meta.outputs.tags }}"
+        echo ""
+        echo "拉取命令:"
+        echo "  docker pull ${{ env.IMAGE_NAME }}:alpine-latest"
+        echo "  docker pull ${{ env.IMAGE_NAME }}:latest"
